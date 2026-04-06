@@ -20,7 +20,7 @@ export default function ColorPicker({ region, selectedHex, onSelect }: ColorPick
       <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
         {REGION_LABELS[region]}
       </h3>
-      <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-4">
+      <div className="grid grid-cols-5 gap-2">
         {MCBI_COLORS.map((color) => (
           <button
             key={`${region}-${color.hex}`}

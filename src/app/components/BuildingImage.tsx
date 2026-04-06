@@ -117,16 +117,25 @@ const NONE = 0,
 
 /**
  * Classify a pixel into a building region based on its color and position.
+ * Trim detection uses a separate reference image (red-highlighted areas).
  * Navy-blue pixels → walls.  Light pixels in roof polygon → roof.
- * Light pixels in wall polygons → trim (doors/windows/frames).
  */
 function classifyPixel(
   r: number,
   g: number,
   b: number,
   x: number,
-  y: number
+  y: number,
+  trimR: number,
+  trimG: number,
+  trimB: number,
 ): number {
+  // Trim: detected by comparing trim reference (red overlay) against base image.
+  // Where the overlay added red (R increased) and removed green (G decreased).
+  if ((trimR - r) > 30 && (g - trimG) > 15) {
+    return TRIM;
+  }
+
   const [h, s, l] = rgbToHsl(r, g, b);
 
   // Navy-blue wall panels — require s>15 to avoid roof standing-seam ridges
@@ -139,16 +148,6 @@ function classifyPixel(
   // Roof: bright or moderately dark (standing-seam ridges) within roof polygon
   if (l > 50 && s < 40) {
     if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
-  }
-
-  // Trim: bright white elements (doors, windows, frames) — require L>72
-  // to exclude concrete pad and ground pixels that are merely "light"
-  if (l > 72 && s < 40) {
-    if (
-      pointInPoly(x, y, FRONT_WALL_POLY) ||
-      pointInPoly(x, y, SIDE_WALL_POLY)
-    )
-      return TRIM;
   }
 
   // Catch dark standing-seam ridges on roof (low sat, moderate darkness)
@@ -167,10 +166,15 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
   const avgLumRef = useRef<Float32Array | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  // Load the base image and pre-compute the region mask + luminance map (once).
+  // Load the base image + trim reference and pre-compute the region mask + luminance map (once).
   useEffect(() => {
     const img = new Image();
-    img.onload = () => {
+    const trimImg = new Image();
+    let baseLoaded = false;
+    let trimLoaded = false;
+
+    const buildMask = () => {
+      if (!baseLoaded || !trimLoaded) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = img.width;
@@ -178,9 +182,20 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
+      // Get base image pixel data
       ctx.drawImage(img, 0, 0);
       const data = ctx.getImageData(0, 0, img.width, img.height);
       baseDataRef.current = data;
+
+      // Get trim reference pixel data (scaled to match base image)
+      const trimCanvas = document.createElement("canvas");
+      trimCanvas.width = img.width;
+      trimCanvas.height = img.height;
+      const trimCtx = trimCanvas.getContext("2d");
+      if (!trimCtx) return;
+      trimCtx.drawImage(trimImg, 0, 0, img.width, img.height);
+      const trimData = trimCtx.getImageData(0, 0, img.width, img.height);
+      const trimPx = trimData.data;
 
       const total = img.width * img.height;
       const mask = new Uint8Array(total);
@@ -198,7 +213,10 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
           px[off + 1],
           px[off + 2],
           i % img.width,
-          (i / img.width) | 0
+          (i / img.width) | 0,
+          trimPx[off],
+          trimPx[off + 1],
+          trimPx[off + 2],
         );
         mask[i] = region;
         if (region > 0) {
@@ -220,7 +238,12 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
       avgLumRef.current = avgLum;
       setLoaded(true);
     };
+
+    img.onload = () => { baseLoaded = true; buildMask(); };
+    trimImg.onload = () => { trimLoaded = true; buildMask(); };
+
     img.src = "/lodge_base.jpg";
+    trimImg.src = "/lodge_trim_mask.png";
   }, []);
 
   // Re-colorize whenever the selected colors change.
