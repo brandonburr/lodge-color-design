@@ -12,35 +12,36 @@ interface BuildingImageProps {
 
 // Front roof slope (main visible surface, from front eave up to ridge)
 const FRONT_ROOF_POLY: [number, number][] = [
-  [245, 440],
-  [350, 275],
-  [830, 238],
-  [1260, 238],
+  [230, 440],
+  [230, 365],
+  [530, 265],
+  [830, 235],
+  [1260, 220],
   [1260, 508],
 ];
 
 // Side roof slope (visible past gable on right side)
 const SIDE_ROOF_POLY: [number, number][] = [
-  [1260, 240],
-  [1620, 258],
-  [1580, 290],
+  [1260, 220],
+  [1640, 230],
+  [1640, 265],
   [1260, 508],
 ];
 
-// Front wall (below front eave, traced to building outline)
+// Front wall (below front eave, follows building outline, stops above foundation)
 const FRONT_WALL_POLY: [number, number][] = [
   [245, 440],
   [1260, 508],
-  [1260, 1170],
-  [245, 985],
+  [1260, 1130],
+  [315, 935],
 ];
 
-// Side wall (right face, below side eave)
+// Side wall (right face, below side eave, stops above foundation)
 const SIDE_WALL_POLY: [number, number][] = [
   [1260, 508],
   [1580, 290],
-  [1580, 885],
-  [1260, 1170],
+  [1580, 840],
+  [1260, 1130],
 ];
 
 function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
@@ -152,6 +153,11 @@ function classifyPixel(
       pointInPoly(x, y, SIDE_ROOF_POLY)
     )
       return ROOF;
+  }
+
+  // Trim: bright white elements (doors, windows, frames) — require L>72
+  // to exclude concrete pad and ground pixels that are merely "light"
+  if (l > 72 && s < 40) {
     if (
       pointInPoly(x, y, FRONT_WALL_POLY) ||
       pointInPoly(x, y, SIDE_WALL_POLY)
