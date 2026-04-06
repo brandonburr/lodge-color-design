@@ -4,7 +4,7 @@ import { SharedState } from "./sharedState";
 // Uses an Access Key (not Master Key) for read+write on this bin.
 // The Access Key must have read+write permissions for the bin below.
 const JSONBIN_BIN_ID = "69d431aa856a682189069ad9";
-const JSONBIN_ACCESS_KEY = "69d43234aaba882197cedc9b";
+const JSONBIN_ACCESS_KEY = "$2a$10$ed/GSEcQ9II7twI3mk1Rv.3nTE/uuPaa6gewc5SggdWgoMg2zJQOG";
 const JSONBIN_API = "https://api.jsonbin.io/v3";
 
 export function isJsonBinConfigured(): boolean {
