@@ -130,10 +130,13 @@ function classifyPixel(
   trimG: number,
   trimB: number,
 ): number {
-  // Trim: detected by comparing trim reference (red overlay) against base image.
-  // Where the overlay added red (R increased) and removed green (G decreased).
-  if ((trimR - r) > 30 && (g - trimG) > 15) {
-    return TRIM;
+  // Trim: detected where the reference image has a red overlay.
+  // A pixel is trim if it's red-dominant in the reference (R >> G and R >> B)
+  // but NOT red-dominant in the base image.
+  if (trimR > 120 && (trimR - trimG) > 40 && (trimR - trimB) > 40) {
+    if (!(r > 120 && (r - g) > 40 && (r - b) > 40)) {
+      return TRIM;
+    }
   }
 
   const [h, s, l] = rgbToHsl(r, g, b);
