@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   ColorSelection,
   BuildingRegion,
@@ -19,8 +19,6 @@ import CommunityDesigns from "./CommunityDesigns";
 
 export default function Visualizer() {
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
 
   const [colors, setColors] = useState<ColorSelection>(() => {
     const roof = searchParams.get("roof") || DEFAULT_COLORS.roof;
@@ -64,14 +62,15 @@ export default function Visualizer() {
       .finally(() => setCommunityLoading(false));
   }, [configured]);
 
-  // Update URL when colors change
+  // Update URL when colors change (use history API directly to avoid
+  // triggering the Next.js router, which re-suspends useSearchParams)
   useEffect(() => {
     const params = new URLSearchParams();
     params.set("roof", colors.roof);
     params.set("walls", colors.walls);
     params.set("trim", colors.trim);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [colors, router, pathname]);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [colors]);
 
   const regionHandlers = useMemo(() => ({
     roof: (hex: string) => setColors((prev) => ({ ...prev, roof: hex })),
@@ -100,11 +99,11 @@ export default function Visualizer() {
     params.set("roof", colors.roof);
     params.set("walls", colors.walls);
     params.set("trim", colors.trim);
-    const url = `${window.location.origin}${pathname}?${params.toString()}`;
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [colors, pathname]);
+  }, [colors]);
 
   const handleExportImage = useCallback(async () => {
     const srcCanvas = document.getElementById("building-canvas") as HTMLCanvasElement | null;
