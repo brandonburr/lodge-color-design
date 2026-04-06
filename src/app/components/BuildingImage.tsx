@@ -10,38 +10,28 @@ interface BuildingImageProps {
 // Region polygons traced from the lodge base image (1890x1398 pixels).
 // Tightly traced to follow actual building edges.
 
-// Front roof slope (main visible surface, from front eave up to ridge)
-const FRONT_ROOF_POLY: [number, number][] = [
-  [230, 440],
-  [230, 365],
-  [530, 265],
-  [830, 235],
-  [1260, 220],
-  [1260, 508],
-];
-
-// Side roof slope (visible past gable on right side)
-const SIDE_ROOF_POLY: [number, number][] = [
-  [1260, 220],
-  [1640, 230],
-  [1640, 265],
-  [1260, 508],
+// Roof outline — single quadrilateral from board-annotated vertices
+const ROOF_POLY: [number, number][] = [
+  [241, 431],
+  [561, 254],
+  [1622, 211],
+  [1423, 510],
 ];
 
 // Front wall (below front eave, follows building outline, stops above foundation)
 const FRONT_WALL_POLY: [number, number][] = [
-  [245, 440],
-  [1260, 508],
-  [1260, 1130],
+  [241, 431],
+  [1423, 510],
+  [1423, 1130],
   [315, 935],
 ];
 
 // Side wall (right face, below side eave, stops above foundation)
 const SIDE_WALL_POLY: [number, number][] = [
-  [1260, 508],
-  [1580, 290],
-  [1580, 840],
-  [1260, 1130],
+  [1423, 510],
+  [1622, 211],
+  [1622, 840],
+  [1423, 1130],
 ];
 
 function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
@@ -146,13 +136,9 @@ function classifyPixel(
     }
   }
 
-  // Roof: bright or moderately dark (standing-seam ridges) within roof polygons
+  // Roof: bright or moderately dark (standing-seam ridges) within roof polygon
   if (l > 50 && s < 40) {
-    if (
-      pointInPoly(x, y, FRONT_ROOF_POLY) ||
-      pointInPoly(x, y, SIDE_ROOF_POLY)
-    )
-      return ROOF;
+    if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
   }
 
   // Trim: bright white elements (doors, windows, frames) — require L>72
@@ -167,11 +153,7 @@ function classifyPixel(
 
   // Catch dark standing-seam ridges on roof (low sat, moderate darkness)
   if (l >= 35 && l <= 60 && s < 15) {
-    if (
-      pointInPoly(x, y, FRONT_ROOF_POLY) ||
-      pointInPoly(x, y, SIDE_ROOF_POLY)
-    )
-      return ROOF;
+    if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
   }
 
   return NONE;
