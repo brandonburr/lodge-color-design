@@ -245,8 +245,9 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
     img.onload = () => { baseLoaded = true; buildMask(); };
     trimImg.onload = () => { trimLoaded = true; buildMask(); };
 
-    img.src = "/lodge_base.jpg";
-    trimImg.src = "/lodge_trim_mask.png";
+    const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    img.src = `${base}/lodge_base.jpg`;
+    trimImg.src = `${base}/lodge_trim_mask.png`;
   }, []);
 
   // Re-colorize whenever the selected colors change.
