@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   ColorSelection,
@@ -30,7 +30,6 @@ export default function Visualizer() {
   const [saveName, setSaveName] = useState("");
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeRegion, setActiveRegion] = useState<BuildingRegion>("roof");
   const buildingRef = useRef<HTMLDivElement>(null);
 
   // Load saved combinations from localStorage
@@ -47,12 +46,11 @@ export default function Visualizer() {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [colors, router, pathname]);
 
-  const handleColorSelect = useCallback(
-    (hex: string) => {
-      setColors((prev) => ({ ...prev, [activeRegion]: hex }));
-    },
-    [activeRegion]
-  );
+  const regionHandlers = useMemo(() => ({
+    roof: (hex: string) => setColors((prev) => ({ ...prev, roof: hex })),
+    walls: (hex: string) => setColors((prev) => ({ ...prev, walls: hex })),
+    trim: (hex: string) => setColors((prev) => ({ ...prev, trim: hex })),
+  }), []);
 
   const handleSave = useCallback(() => {
     if (!saveName.trim()) return;
@@ -111,7 +109,7 @@ export default function Visualizer() {
       if (!blob) return;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "mcbi-building-colors.png";
+      a.download = "cbap-lodge-colors.png";
       a.click();
       URL.revokeObjectURL(a.href);
     }, "image/png");
@@ -212,32 +210,17 @@ export default function Visualizer() {
       </div>
 
       {/* Color Picker Sidebar */}
-      <div className="w-full lg:w-80 shrink-0 space-y-4">
-        {/* Region tabs */}
-        <div className="flex rounded-lg bg-gray-100 p-1">
-          {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => (
-            <button
-              key={region}
-              onClick={() => setActiveRegion(region)}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                activeRegion === region
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              {regionLabel(region)}
-            </button>
-          ))}
-        </div>
-
-        {/* Active color picker */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <ColorPicker
-            region={activeRegion}
-            selectedHex={colors[activeRegion]}
-            onSelect={handleColorSelect}
-          />
-        </div>
+      <div className="w-full lg:w-96 shrink-0 space-y-4 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+        {/* All three color sections */}
+        {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => (
+          <div key={region} className="bg-white rounded-xl border border-gray-200 p-4">
+            <ColorPicker
+              region={region}
+              selectedHex={colors[region]}
+              onSelect={regionHandlers[region]}
+            />
+          </div>
+        ))}
 
         {/* Saved combinations */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">

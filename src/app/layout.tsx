@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MCBI Color Visualizer",
-  description: "Visualize and share MCBI color combinations for your metal building — roof, walls, and trim",
+  title: "CBAP Lodge Designer",
+  description: "Design and share MBCI color combinations for your lodge — roof, walls, and trim",
 };
 
 export default function RootLayout({

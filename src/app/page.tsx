@@ -8,10 +8,10 @@ export default function Home() {
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-            MCBI Color Visualizer
+            CBAP Lodge Designer
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Choose colors for your metal building — roof, walls, and trim
+            Choose colors for your lodge — roof, walls, and trim
           </p>
         </div>
       </header>
@@ -32,7 +32,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-gray-200 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 text-center text-xs text-gray-400">
-          MCBI Color Visualizer — Select and share building color combinations
+          CBAP Lodge Designer — Select and share building color combinations
         </div>
       </footer>
     </main>

@@ -14,39 +14,31 @@ const REGION_LABELS: Record<BuildingRegion, string> = {
   trim: "Trim & Accents",
 };
 
-const REGION_ICONS: Record<BuildingRegion, string> = {
-  roof: "^",
-  walls: "[]",
-  trim: "|",
-};
-
 export default function ColorPicker({ region, selectedHex, onSelect }: ColorPickerProps) {
-  const selectedColor = MCBI_COLORS.find((c) => c.hex === selectedHex);
-
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
-          {REGION_LABELS[region]}
-        </h3>
-        {selectedColor && (
-          <span className="text-xs text-gray-500">{selectedColor.name}</span>
-        )}
-      </div>
-      <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-6 md:grid-cols-5">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
+        {REGION_LABELS[region]}
+      </h3>
+      <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-4">
         {MCBI_COLORS.map((color) => (
           <button
             key={`${region}-${color.hex}`}
             onClick={() => onSelect(color.hex)}
             title={color.name}
-            className={`aspect-square rounded-md border-2 transition-all hover:scale-110 hover:shadow-md ${
+            className={`flex flex-col items-center gap-1 rounded-md border-2 p-1.5 transition-all hover:scale-105 hover:shadow-md ${
               selectedHex === color.hex
                 ? "border-blue-500 ring-2 ring-blue-300 scale-105"
                 : "border-gray-200 hover:border-gray-400"
             }`}
-            style={{ backgroundColor: color.hex }}
           >
-            <span className="sr-only">{color.name}</span>
+            <div
+              className="w-full aspect-square rounded-sm"
+              style={{ backgroundColor: color.hex }}
+            />
+            <span className="text-[10px] leading-tight text-gray-600 text-center w-full truncate">
+              {color.name}
+            </span>
           </button>
         ))}
       </div>
