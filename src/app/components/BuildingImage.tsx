@@ -8,30 +8,39 @@ interface BuildingImageProps {
 }
 
 // Region polygons traced from the lodge base image (1890x1398 pixels).
-// These define spatial boundaries used alongside color detection.
+// Tightly traced to follow actual building edges.
 
-// Roof surface (standing seam area)
-const ROOF_POLY: [number, number][] = [
-  [95, 530],
-  [660, 50],
-  [1785, 405],
-  [1260, 530],
+// Front roof slope (main visible surface, from front eave up to ridge)
+const FRONT_ROOF_POLY: [number, number][] = [
+  [245, 440],
+  [350, 275],
+  [830, 238],
+  [1260, 238],
+  [1260, 508],
 ];
 
-// Front wall (gable end, below eave)
+// Side roof slope (visible past gable on right side)
+const SIDE_ROOF_POLY: [number, number][] = [
+  [1260, 240],
+  [1620, 258],
+  [1580, 290],
+  [1260, 508],
+];
+
+// Front wall (below front eave, traced to building outline)
 const FRONT_WALL_POLY: [number, number][] = [
-  [95, 530],
-  [1260, 530],
-  [1260, 1280],
-  [95, 1280],
+  [245, 440],
+  [1260, 508],
+  [1260, 1170],
+  [245, 985],
 ];
 
-// Side wall (right face, below eave)
+// Side wall (right face, below side eave)
 const SIDE_WALL_POLY: [number, number][] = [
-  [1260, 530],
-  [1785, 405],
-  [1785, 1145],
-  [1260, 1280],
+  [1260, 508],
+  [1580, 290],
+  [1580, 885],
+  [1260, 1170],
 ];
 
 function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
@@ -129,21 +138,34 @@ function classifyPixel(
 ): number {
   const [h, s, l] = rgbToHsl(r, g, b);
 
-  // Navy-blue wall panels — unique hue in this image
-  if (h >= 190 && h <= 270 && s > 8 && l > 5 && l < 55) {
+  // Navy-blue wall panels — require s>15 to avoid roof standing-seam ridges
+  if (h >= 190 && h <= 270 && s > 15 && l > 5 && l < 55) {
     if (x > 80 && x < 1800 && y > 50 && y < 1300) {
       return WALLS;
     }
   }
 
-  // Light / white pixels — separate roof vs trim spatially
+  // Roof: bright or moderately dark (standing-seam ridges) within roof polygons
   if (l > 50 && s < 40) {
-    if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
+    if (
+      pointInPoly(x, y, FRONT_ROOF_POLY) ||
+      pointInPoly(x, y, SIDE_ROOF_POLY)
+    )
+      return ROOF;
     if (
       pointInPoly(x, y, FRONT_WALL_POLY) ||
       pointInPoly(x, y, SIDE_WALL_POLY)
     )
       return TRIM;
+  }
+
+  // Catch dark standing-seam ridges on roof (low sat, moderate darkness)
+  if (l >= 35 && l <= 60 && s < 15) {
+    if (
+      pointInPoly(x, y, FRONT_ROOF_POLY) ||
+      pointInPoly(x, y, SIDE_ROOF_POLY)
+    )
+      return ROOF;
   }
 
   return NONE;
@@ -154,6 +176,7 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
   const baseDataRef = useRef<ImageData | null>(null);
   const maskRef = useRef<Uint8Array | null>(null);
   const lumRef = useRef<Float32Array | null>(null);
+  const avgLumRef = useRef<Float32Array | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   // Load the base image and pre-compute the region mask + luminance map (once).
@@ -176,6 +199,10 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
       const lum = new Float32Array(total);
       const px = data.data;
 
+      // Per-region luminance accumulators
+      const lumSum = new Float64Array(4);
+      const lumCount = new Uint32Array(4);
+
       for (let i = 0; i < total; i++) {
         const off = i * 4;
         const region = classifyPixel(
@@ -187,12 +214,22 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
         );
         mask[i] = region;
         if (region > 0) {
-          lum[i] = rgbToHsl(px[off], px[off + 1], px[off + 2])[2];
+          const l = rgbToHsl(px[off], px[off + 1], px[off + 2])[2];
+          lum[i] = l;
+          lumSum[region] += l;
+          lumCount[region]++;
         }
+      }
+
+      // Compute average luminance per region
+      const avgLum = new Float32Array(4);
+      for (let r = 1; r <= 3; r++) {
+        avgLum[r] = lumCount[r] > 0 ? lumSum[r] / lumCount[r] : 50;
       }
 
       maskRef.current = mask;
       lumRef.current = lum;
+      avgLumRef.current = avgLum;
       setLoaded(true);
     };
     img.src = "/lodge_base.jpg";
@@ -205,7 +242,8 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
     const base = baseDataRef.current;
     const mask = maskRef.current;
     const lumArr = lumRef.current;
-    if (!canvas || !base || !mask || !lumArr) return;
+    const avgLum = avgLumRef.current;
+    if (!canvas || !base || !mask || !lumArr || !avgLum) return;
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
@@ -229,8 +267,10 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
 
       const off = i * 4;
       const t = targets[region]!;
-      // Keep original luminance, apply target hue + saturation
-      const [nr, ng, nb] = hslToRgb(t[0], t[1], lumArr[i]);
+      // Relative luminance: preserve texture/shading while matching target brightness
+      const relLum = avgLum[region] > 0 ? lumArr[i] / avgLum[region] : 1;
+      const newL = Math.min(100, Math.max(0, t[2] * relLum));
+      const [nr, ng, nb] = hslToRgb(t[0], t[1], newL);
       d[off] = nr;
       d[off + 1] = ng;
       d[off + 2] = nb;
