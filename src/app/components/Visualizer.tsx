@@ -9,10 +9,13 @@ import {
   SavedCombination,
   MCBI_COLORS,
 } from "@/lib/colors";
-import { getSavedCombinations, saveCombination } from "@/lib/storage";
+import { getSavedCombinations, saveCombination, getUsername, setUsername as persistUsername } from "@/lib/storage";
+import { SharedDesign } from "@/lib/sharedState";
+import { fetchSharedState, updateSharedState, isJsonBinConfigured } from "@/lib/jsonbin";
 import BuildingImage from "./BuildingImage";
 import ColorPicker from "./ColorPicker";
 import SavedCombinations from "./SavedCombinations";
+import CommunityDesigns from "./CommunityDesigns";
 
 export default function Visualizer() {
   const searchParams = useSearchParams();
@@ -32,10 +35,34 @@ export default function Visualizer() {
   const [copied, setCopied] = useState(false);
   const buildingRef = useRef<HTMLDivElement>(null);
 
-  // Load saved combinations from localStorage
+  // Community / shared state
+  const [username, setUsernameState] = useState("");
+  const [usernameInput, setUsernameInput] = useState("");
+  const [communityDesigns, setCommunityDesigns] = useState<SharedDesign[]>([]);
+  const [communityLoading, setCommunityLoading] = useState(true);
+  const [shareName, setShareName] = useState("");
+  const [showShareInput, setShowShareInput] = useState(false);
+  const configured = isJsonBinConfigured();
+
+  // Load saved combinations from localStorage + username
   useEffect(() => {
     setSaved(getSavedCombinations());
+    const name = getUsername();
+    setUsernameState(name);
+    setUsernameInput(name);
   }, []);
+
+  // Load community designs from JSONBin
+  useEffect(() => {
+    if (!configured) {
+      setCommunityLoading(false);
+      return;
+    }
+    fetchSharedState()
+      .then((state) => setCommunityDesigns(state.designs))
+      .catch(() => {})
+      .finally(() => setCommunityLoading(false));
+  }, [configured]);
 
   // Update URL when colors change
   useEffect(() => {
@@ -119,6 +146,78 @@ export default function Visualizer() {
     setColors(DEFAULT_COLORS);
   }, []);
 
+  // ── Community handlers ──────────────────────────────────────
+
+  const handleSetUsername = useCallback(() => {
+    const trimmed = usernameInput.trim();
+    if (!trimmed) return;
+    setUsernameState(trimmed);
+    persistUsername(trimmed);
+  }, [usernameInput]);
+
+  const handleShareDesign = useCallback(async () => {
+    if (!shareName.trim() || !username || !configured) return;
+    try {
+      const state = await fetchSharedState();
+      const newDesign: SharedDesign = {
+        id: crypto.randomUUID(),
+        name: shareName.trim(),
+        colors: { ...colors },
+        createdBy: username,
+        createdAt: Date.now(),
+        thumbsUp: [],
+        comments: [],
+      };
+      state.designs.push(newDesign);
+      await updateSharedState(state);
+      setCommunityDesigns(state.designs);
+      setShareName("");
+      setShowShareInput(false);
+    } catch {
+      // silent fail – JSONBin may be unavailable
+    }
+  }, [shareName, username, colors, configured]);
+
+  const handleToggleVote = useCallback(
+    async (designId: string) => {
+      if (!username || !configured) return;
+      try {
+        const state = await fetchSharedState();
+        const design = state.designs.find((d) => d.id === designId);
+        if (!design) return;
+        const idx = design.thumbsUp.indexOf(username);
+        if (idx >= 0) {
+          design.thumbsUp.splice(idx, 1);
+        } else {
+          design.thumbsUp.push(username);
+        }
+        await updateSharedState(state);
+        setCommunityDesigns([...state.designs]);
+      } catch {}
+    },
+    [username, configured]
+  );
+
+  const handleAddComment = useCallback(
+    async (designId: string, text: string) => {
+      if (!username || !configured) return;
+      try {
+        const state = await fetchSharedState();
+        const design = state.designs.find((d) => d.id === designId);
+        if (!design) return;
+        design.comments.push({
+          id: crypto.randomUUID(),
+          author: username,
+          text,
+          createdAt: Date.now(),
+        });
+        await updateSharedState(state);
+        setCommunityDesigns([...state.designs]);
+      } catch {}
+    },
+    [username, configured]
+  );
+
   const regionLabel = (r: BuildingRegion) => {
     const labels: Record<BuildingRegion, string> = {
       roof: "Roof",
@@ -176,8 +275,18 @@ export default function Visualizer() {
             onClick={() => setShowSaveInput(!showSaveInput)}
             className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
           >
-            Save Combination
+            Save Locally
           </button>
+          {configured && (
+            <button
+              onClick={() => setShowShareInput(!showShareInput)}
+              disabled={!username}
+              className="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={!username ? "Set your name first" : "Share with the group"}
+            >
+              Share to Community
+            </button>
+          )}
           <button
             onClick={handleReset}
             className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors"
@@ -207,10 +316,70 @@ export default function Visualizer() {
             </button>
           </div>
         )}
+
+        {/* Share input */}
+        {showShareInput && configured && (
+          <div className="flex gap-2 mt-2">
+            <input
+              type="text"
+              value={shareName}
+              onChange={(e) => setShareName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleShareDesign()}
+              placeholder="Name this design for the group..."
+              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400"
+              autoFocus
+            />
+            <button
+              onClick={handleShareDesign}
+              disabled={!shareName.trim()}
+              className="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Share
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Color Picker Sidebar */}
       <div className="w-full lg:w-96 shrink-0 space-y-4 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+        {/* Your name */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-2">
+            Your Name
+          </h3>
+          {username ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-800 flex-1">
+                {username}
+              </span>
+              <button
+                onClick={() => { setUsernameState(""); persistUsername(""); }}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSetUsername()}
+                placeholder="Enter your name..."
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <button
+                onClick={handleSetUsername}
+                disabled={!usernameInput.trim()}
+                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                Set
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* All three color sections */}
         {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => (
           <div key={region} className="bg-white rounded-xl border border-gray-200 p-4">
@@ -222,10 +391,10 @@ export default function Visualizer() {
           </div>
         ))}
 
-        {/* Saved combinations */}
+        {/* Saved combinations (local) */}
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-3">
-            Saved Combinations
+            My Saved Combinations
           </h3>
           <SavedCombinations
             combinations={saved}
@@ -233,6 +402,23 @@ export default function Visualizer() {
             onDelete={handleDelete}
           />
         </div>
+
+        {/* Community designs (shared via JSONBin) */}
+        {configured && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-3">
+              Community Designs
+            </h3>
+            <CommunityDesigns
+              designs={communityDesigns}
+              username={username}
+              onToggleVote={handleToggleVote}
+              onAddComment={handleAddComment}
+              onLoadDesign={handleLoad}
+              loading={communityLoading}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
