@@ -10,7 +10,7 @@ import {
   MCBI_COLORS,
 } from "@/lib/colors";
 import { getSavedCombinations, saveCombination } from "@/lib/storage";
-import BuildingSvg from "./BuildingSvg";
+import BuildingImage from "./BuildingImage";
 import ColorPicker from "./ColorPicker";
 import SavedCombinations from "./SavedCombinations";
 
@@ -82,47 +82,39 @@ export default function Visualizer() {
   }, [colors, pathname]);
 
   const handleExportImage = useCallback(async () => {
-    const svgElement = document.getElementById("building");
-    if (!svgElement) return;
+    const srcCanvas = document.getElementById("building-canvas") as HTMLCanvasElement | null;
+    if (!srcCanvas) return;
 
-    const svgData = new XMLSerializer().serializeToString(svgElement);
-    const canvas = document.createElement("canvas");
-    canvas.width = 1600;
-    canvas.height = 1000;
-    const ctx = canvas.getContext("2d");
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = srcCanvas.width;
+    exportCanvas.height = srcCanvas.height + 60;
+    const ctx = exportCanvas.getContext("2d");
     if (!ctx) return;
 
-    // White background
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(srcCanvas, 0, 0);
 
-    const img = new Image();
-    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
+    // Color legend
+    ctx.fillStyle = "#333";
+    ctx.font = "24px sans-serif";
+    const roofName = MCBI_COLORS.find((c) => c.hex === colors.roof)?.name || colors.roof;
+    const wallsName = MCBI_COLORS.find((c) => c.hex === colors.walls)?.name || colors.walls;
+    const trimName = MCBI_COLORS.find((c) => c.hex === colors.trim)?.name || colors.trim;
+    ctx.fillText(
+      `Roof: ${roofName}  |  Walls: ${wallsName}  |  Trim: ${trimName}`,
+      40,
+      srcCanvas.height + 40
+    );
 
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-
-      // Add color legend
-      ctx.fillStyle = "#333";
-      ctx.font = "24px sans-serif";
-      const roofName = MCBI_COLORS.find((c) => c.hex === colors.roof)?.name || colors.roof;
-      const wallsName = MCBI_COLORS.find((c) => c.hex === colors.walls)?.name || colors.walls;
-      const trimName = MCBI_COLORS.find((c) => c.hex === colors.trim)?.name || colors.trim;
-      ctx.fillText(`Roof: ${roofName}  |  Walls: ${wallsName}  |  Trim: ${trimName}`, 40, 970);
-
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "mcbi-building-colors.png";
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }, "image/png");
-    };
-
-    img.src = url;
+    exportCanvas.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "mcbi-building-colors.png";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, "image/png");
   }, [colors]);
 
   const handleReset = useCallback(() => {
@@ -146,7 +138,7 @@ export default function Visualizer() {
           ref={buildingRef}
           className="bg-gradient-to-b from-sky-100 to-sky-50 rounded-xl p-4 sm:p-8 flex items-center justify-center shadow-inner"
         >
-          <BuildingSvg colors={colors} />
+          <BuildingImage colors={colors} />
         </div>
 
         {/* Color summary bar */}
