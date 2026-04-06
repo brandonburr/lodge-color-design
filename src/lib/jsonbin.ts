@@ -5,8 +5,8 @@ import { SharedState } from "./sharedState";
 // 2. Copy your X-Master-Key from Settings → API Keys
 // 3. Create a bin with initial content: { "designs": [] }
 // 4. Paste the bin ID and master key below
-const JSONBIN_BIN_ID = "";      // e.g. "665a1b2c3d4e5f6a7b8c9d0e"
-const JSONBIN_MASTER_KEY = "";  // e.g. "$2a$10$..."
+const JSONBIN_BIN_ID = "69d431aa856a682189069ad9";
+const JSONBIN_MASTER_KEY = "69d43234aaba882197cedc9b";
 const JSONBIN_API = "https://api.jsonbin.io/v3";
 
 export function isJsonBinConfigured(): boolean {
