@@ -117,7 +117,8 @@ const NONE = 0,
 
 /**
  * Classify a pixel into a building region based on its color and position.
- * Trim detection uses a separate reference image (red-highlighted areas).
+ * Trim detection compares base vs reference image pixel-by-pixel:
+ * where the reference added red paint, pixels differ → trim.
  * Navy-blue pixels → walls.  Light pixels in roof polygon → roof.
  */
 function classifyPixel(
@@ -130,13 +131,23 @@ function classifyPixel(
   trimG: number,
   trimB: number,
 ): number {
-  // Trim: detected where the reference image has a red overlay.
-  // A pixel is trim if it's red-dominant in the reference (R >> G and R >> B)
-  // but NOT red-dominant in the base image.
-  if (trimR > 120 && (trimR - trimG) > 40 && (trimR - trimB) > 40) {
-    if (!(r > 120 && (r - g) > 40 && (r - b) > 40)) {
-      return TRIM;
-    }
+  // Trim: detected by comparing base image to reference image.
+  // The reference has red paint overlaid on trim areas, so pixels differ
+  // where trim was marked. This is more robust than analyzing reference
+  // color alone, especially at anti-aliased edges.
+  const dr = trimR - r;
+  const dg = trimG - g;
+  const db = trimB - b;
+  const totalDiff = Math.abs(dr) + Math.abs(dg) + Math.abs(db);
+
+  // Primary: significant pixel difference between base and reference
+  if (totalDiff > 30) {
+    return TRIM;
+  }
+
+  // Secondary: catch anti-aliased edge pixels with subtle red shift
+  if (totalDiff > 12 && dr > 3 && (dg < -2 || db < -2)) {
+    return TRIM;
   }
 
   const [h, s, l] = rgbToHsl(r, g, b);
@@ -230,6 +241,73 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
         }
       }
 
+      // Morphological close on trim mask: dilate then erode to fill small gaps
+      // in the detected trim regions (anti-aliasing and scaling artifacts).
+      const w = img.width;
+      const h = img.height;
+      let trimBin = new Uint8Array(total);
+      for (let i = 0; i < total; i++) {
+        trimBin[i] = mask[i] === TRIM ? 1 : 0;
+      }
+      const CLOSE_ITERS = 3;
+      // Dilate: expand trim regions
+      for (let iter = 0; iter < CLOSE_ITERS; iter++) {
+        const next = new Uint8Array(trimBin);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const idx = y * w + x;
+            if (trimBin[idx]) continue;
+            if (
+              trimBin[idx - w - 1] || trimBin[idx - w] || trimBin[idx - w + 1] ||
+              trimBin[idx - 1] || trimBin[idx + 1] ||
+              trimBin[idx + w - 1] || trimBin[idx + w] || trimBin[idx + w + 1]
+            ) {
+              next[idx] = 1;
+            }
+          }
+        }
+        trimBin = next;
+      }
+      // Erode: shrink back to original boundary
+      for (let iter = 0; iter < CLOSE_ITERS; iter++) {
+        const next = new Uint8Array(trimBin);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const idx = y * w + x;
+            if (!trimBin[idx]) continue;
+            if (
+              !trimBin[idx - w - 1] || !trimBin[idx - w] || !trimBin[idx - w + 1] ||
+              !trimBin[idx - 1] || !trimBin[idx + 1] ||
+              !trimBin[idx + w - 1] || !trimBin[idx + w] || !trimBin[idx + w + 1]
+            ) {
+              next[idx] = 0;
+            }
+          }
+        }
+        trimBin = next;
+      }
+      // Apply closed mask: upgrade NONE and WALLS pixels to TRIM.
+      // Trim areas sit on/within walls, so wall pixels surrounded by trim
+      // are misclassified boundary pixels that should be part of the trim.
+      for (let i = 0; i < total; i++) {
+        if (trimBin[i] && (mask[i] === NONE || mask[i] === WALLS)) {
+          mask[i] = TRIM;
+        }
+      }
+
+      // Recompute luminance for trim region after morphological cleanup
+      lumSum[TRIM] = 0;
+      lumCount[TRIM] = 0;
+      for (let i = 0; i < total; i++) {
+        if (mask[i] === TRIM) {
+          const off = i * 4;
+          const l = rgbToHsl(px[off], px[off + 1], px[off + 2])[2];
+          lum[i] = l;
+          lumSum[TRIM] += l;
+          lumCount[TRIM]++;
+        }
+      }
+
       // Compute average luminance per region
       const avgLum = new Float32Array(4);
       for (let r = 1; r <= 3; r++) {
@@ -282,8 +360,14 @@ export default function BuildingImage({ colors }: BuildingImageProps) {
 
       const off = i * 4;
       const t = targets[region]!;
-      // Relative luminance: preserve texture/shading while matching target brightness
-      const relLum = avgLum[region] > 0 ? lumArr[i] / avgLum[region] : 1;
+      // Relative luminance: preserve texture/shading while matching target brightness.
+      // For trim, clamp the ratio tightly to avoid white noise from mixed-luminance pixels.
+      let relLum = avgLum[region] > 0 ? lumArr[i] / avgLum[region] : 1;
+      if (region === TRIM) {
+        // Tight clamp: trim is flat-painted metal, so keep nearly uniform color
+        // to avoid noisy/splotchy appearance from luminance variation.
+        relLum = Math.min(1.08, Math.max(0.92, relLum));
+      }
       const newL = Math.min(100, Math.max(0, t[2] * relLum));
       const [nr, ng, nb] = hslToRgb(t[0], t[1], newL);
       d[off] = nr;
