@@ -3,42 +3,33 @@ export interface McbiColor {
   hex: string;
 }
 
-// MBCI Signature® 300 Standard Colors (Kynar 500® / Hylar 5000® PVDF).
+// MBCI Signature® 300 Standard Colors — 24-gauge PVDF Low Gloss.
 //
-// The official MBCI Architectural Color Chart historically listed 18
-// colors here; River Teal, Sea Mist, and Scarlet Red have been
-// discontinued, leaving 15 in the current line.
+// Hex values were sampled directly from the official MBCI Signature 300
+// color chart Brandon provided (5×3 grid of color chips). MBCI doesn't
+// publish hex anywhere on their site — the chart itself is the source
+// of truth.
 //
-// MBCI doesn't publish official hex values for any of its panel
-// finishes — the canonical answer is "look at a physical color chip"
-// because the perceived color depends on gloss, substrate, and
-// lighting. These hex values are MyPerfectColor's calibrated paint
-// matches (https://www.myperfectcolor.com/MBCI-Paint-Color-Matches/),
-// which is the closest thing to a sourced answer and is accurate
-// enough for an on-screen visualizer. A real customer should still
-// order a physical chip from their distributor before committing.
+// Order matches the chart layout (left-to-right, top-to-bottom).
 export const MCBI_COLORS: McbiColor[] = [
-  // Whites + tans
-  { name: "Snow White", hex: "#D2D6D8" },
-  { name: "Almond", hex: "#D5CCB8" },
-  { name: "Brownstone", hex: "#AB9986" },
-  // Bronzes
-  { name: "Medium Bronze", hex: "#645B53" },
-  { name: "Midnight Bronze", hex: "#4A4645" },
-  // Grays
-  { name: "Tundra", hex: "#9E9D9D" },
-  { name: "Slate Gray", hex: "#7C7A77" },
-  // Blues
-  { name: "Pacific Blue", hex: "#4C6573" },
-  { name: "Harbor Blue", hex: "#29556A" },
-  // Greens
-  { name: "Natural Patina", hex: "#92A992" },
-  { name: "Spruce", hex: "#758D87" },
-  { name: "Everglade", hex: "#5E7470" },
-  { name: "Classic Green", hex: "#3C544A" },
-  { name: "Hunter Green", hex: "#444E49" },
-  // Red
-  { name: "Colonial Red", hex: "#724540" },
+  // Row 1: whites + light tones
+  { name: "Snow White", hex: "#ECEEF0" },
+  { name: "Bone White", hex: "#DEDDD6" },
+  { name: "Harbor Blue", hex: "#1C4C61" },
+  { name: "Almond", hex: "#D1C8B4" },
+  { name: "Brownstone", hex: "#A4927F" },
+  // Row 2: bronzes, grays, classic accents
+  { name: "Medium Bronze", hex: "#554B40" },
+  { name: "Slate Gray", hex: "#777572" },
+  { name: "Storm Gray", hex: "#515356" },
+  { name: "Classic Green", hex: "#314A3C" },
+  { name: "Brite Red", hex: "#AC202A" },
+  // Row 3: deep blues, dark neutrals, traditional reds
+  { name: "Pacific Blue", hex: "#395A6B" },
+  { name: "Midnight Bronze", hex: "#403B39" },
+  { name: "Tundra", hex: "#989796" },
+  { name: "Colonial Red", hex: "#6C3B33" },
+  { name: "Midnight Black", hex: "#1F2122" },
 ];
 
 export type BuildingRegion = "roof" | "walls" | "trim";
@@ -50,7 +41,7 @@ export interface ColorSelection {
 }
 
 export const DEFAULT_COLORS: ColorSelection = {
-  roof: "#7C7A77", // Slate Gray
-  walls: "#D2D6D8", // Snow White
-  trim: "#4A4645", // Midnight Bronze
+  roof: "#777572", // Slate Gray
+  walls: "#ECEEF0", // Snow White
+  trim: "#403B39", // Midnight Bronze
 };
