@@ -125,6 +125,29 @@ export default function GalleryGrid() {
     [username, configured, commentDrafts],
   );
 
+  const handleDelete = useCallback(
+    async (designId: string) => {
+      if (!username || !configured) return;
+      try {
+        const state = await fetchSharedState();
+        const design = state.designs.find((d) => d.id === designId);
+        // Only the original creator can delete their own design.
+        if (!design || design.createdBy !== username) return;
+        if (
+          !window.confirm(
+            "Delete this design? This can't be undone.",
+          )
+        ) {
+          return;
+        }
+        state.designs = state.designs.filter((d) => d.id !== designId);
+        await updateSharedState(state);
+        setDesigns([...state.designs]);
+      } catch {}
+    },
+    [username, configured],
+  );
+
   const toggleCommentExpand = useCallback((designId: string) => {
     setExpandedComments((prev) => {
       const next = new Set(prev);
@@ -224,9 +247,20 @@ export default function GalleryGrid() {
                     <div className="text-sm font-medium text-gray-800 leading-snug">
                       {describeDesign(design.colors)}
                     </div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      by {design.createdBy} ·{" "}
-                      {new Date(design.createdAt).toLocaleDateString()}
+                    <div className="text-xs text-gray-400 mt-1 flex items-center gap-2">
+                      <span>
+                        by {design.createdBy} ·{" "}
+                        {new Date(design.createdAt).toLocaleDateString()}
+                      </span>
+                      {username && design.createdBy === username && (
+                        <button
+                          onClick={() => handleDelete(design.id)}
+                          className="text-red-500 hover:text-red-700 hover:underline ml-auto"
+                          title="Delete this design"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
 
                     {/* Comments toggle */}
