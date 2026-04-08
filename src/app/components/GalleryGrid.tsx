@@ -196,7 +196,7 @@ export default function GalleryGrid() {
             No designs yet. Head over to the Designer to save the first one.
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
             {sortedDesigns.map((design) => {
               const voted = !!username && design.thumbsUp.includes(username);
               const expanded = expandedComments.has(design.id);
@@ -215,7 +215,7 @@ export default function GalleryGrid() {
                     >
                       <BuildingImage
                         colors={design.colors}
-                        renderWidth={480}
+                        renderWidth={720}
                         className="w-full h-auto block"
                       />
                     </button>
