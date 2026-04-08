@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MCBI_COLORS, ColorSelection } from "@/lib/colors";
 import { SharedDesign } from "@/lib/sharedState";
@@ -36,6 +36,10 @@ export default function GalleryGrid() {
   const [designs, setDesigns] = useState<SharedDesign[]>(
     () => getCachedSharedState()?.designs ?? [],
   );
+  // Frozen sort order — set once when designs first arrive and then
+  // never re-sorted on local interactions like voting. Cards stay put
+  // so the user doesn't lose their place after clicking thumbs-up.
+  const [sortedIds, setSortedIds] = useState<string[] | null>(null);
   // Loading is only true when configured AND the cache is empty. The
   // early-return path is the same as before.
   const [loading, setLoading] = useState(
@@ -47,6 +51,10 @@ export default function GalleryGrid() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>(
     {},
   );
+  // Pending background server writes for vote toggles, keyed by design id.
+  // We chain new clicks onto the previous promise so writes serialize per
+  // design but the UI stays optimistic.
+  const voteWriteChains = useRef<Map<string, Promise<void>>>(new Map());
 
   // Load username on mount. One-time read of client-only state — the lint
   // rule's cascading-render concern doesn't apply to a single setState on
@@ -64,6 +72,18 @@ export default function GalleryGrid() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [configured]);
+
+  // Freeze the sort order the first time we have designs to show. After
+  // this fires once, voting / commenting / etc. won't reshuffle the grid.
+  useEffect(() => {
+    if (sortedIds !== null || designs.length === 0) return;
+    const sorted = [...designs].sort(
+      (a, b) =>
+        b.thumbsUp.length - a.thumbsUp.length || b.createdAt - a.createdAt,
+    );
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSortedIds(sorted.map((d) => d.id));
+  }, [designs, sortedIds]);
 
   const handleSetUsername = useCallback((name: string) => {
     setUsernameState(name);
@@ -83,21 +103,44 @@ export default function GalleryGrid() {
   );
 
   const handleToggleVote = useCallback(
-    async (designId: string) => {
+    (designId: string) => {
       if (!username || !configured) return;
-      try {
-        const state = await fetchSharedState();
-        const design = state.designs.find((d) => d.id === designId);
-        if (!design) return;
-        const idx = design.thumbsUp.indexOf(username);
-        if (idx >= 0) {
-          design.thumbsUp.splice(idx, 1);
-        } else {
-          design.thumbsUp.push(username);
-        }
-        await updateSharedState(state);
-        setDesigns([...state.designs]);
-      } catch {}
+
+      // Optimistic local update so the button visual + count change
+      // immediately, without waiting for the JSONBin roundtrip.
+      setDesigns((prev) =>
+        prev.map((d) => {
+          if (d.id !== designId) return d;
+          const has = d.thumbsUp.includes(username);
+          return {
+            ...d,
+            thumbsUp: has
+              ? d.thumbsUp.filter((u) => u !== username)
+              : [...d.thumbsUp, username],
+          };
+        }),
+      );
+
+      // Background server write. Chain per-design so rapid clicks
+      // serialize their writes against the most-recent cached state
+      // (avoids one slow PUT clobbering a newer fast PUT).
+      const prevChain =
+        voteWriteChains.current.get(designId) ?? Promise.resolve();
+      const nextChain = prevChain
+        .catch(() => {})
+        .then(async () => {
+          const state = await fetchSharedState();
+          const design = state.designs.find((d) => d.id === designId);
+          if (!design) return;
+          const idx = design.thumbsUp.indexOf(username);
+          if (idx >= 0) {
+            design.thumbsUp.splice(idx, 1);
+          } else {
+            design.thumbsUp.push(username);
+          }
+          await updateSharedState(state);
+        });
+      voteWriteChains.current.set(designId, nextChain);
     },
     [username, configured],
   );
@@ -160,15 +203,32 @@ export default function GalleryGrid() {
     });
   }, []);
 
-  // Sort by votes desc, then newest first.
-  const sortedDesigns = useMemo(
-    () =>
-      [...designs].sort(
+  // Render in the order frozen at first load. Designs that appeared
+  // after the freeze (e.g. someone else just saved one) get appended
+  // at the end so they don't disrupt the existing layout.
+  const sortedDesigns = useMemo(() => {
+    if (sortedIds === null) {
+      // Pre-freeze fallback (only used briefly on first paint).
+      return [...designs].sort(
         (a, b) =>
           b.thumbsUp.length - a.thumbsUp.length || b.createdAt - a.createdAt,
-      ),
-    [designs],
-  );
+      );
+    }
+    const byId = new Map(designs.map((d) => [d.id, d]));
+    const out: SharedDesign[] = [];
+    const seen = new Set<string>();
+    for (const id of sortedIds) {
+      const d = byId.get(id);
+      if (d) {
+        out.push(d);
+        seen.add(id);
+      }
+    }
+    for (const d of designs) {
+      if (!seen.has(d.id)) out.push(d);
+    }
+    return out;
+  }, [designs, sortedIds]);
 
   const showUsernameModal = username === "";
 
@@ -224,17 +284,21 @@ export default function GalleryGrid() {
                     <button
                       onClick={() => handleToggleVote(design.id)}
                       disabled={!username}
-                      className={`absolute top-2 right-2 flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium shadow transition-colors ${
+                      className={`absolute top-2 right-2 flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium shadow transition-colors active:scale-95 active:shadow-sm ${
                         voted
-                          ? "bg-blue-600 text-white"
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
                           : "bg-white/95 text-gray-700 hover:bg-white"
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
                       title={
                         !username
                           ? "Set your name first"
-                          : voted
-                            ? "Remove vote"
-                            : "Vote for this design"
+                          : design.thumbsUp.length === 0
+                            ? "No votes yet — click to vote"
+                            : `Voted by:\n${design.thumbsUp.join("\n")}\n\n${
+                                voted
+                                  ? "Click to remove your vote"
+                                  : "Click to vote"
+                              }`
                       }
                     >
                       <span aria-hidden>👍</span>
