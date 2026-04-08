@@ -1,21 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ColorSelection,
   BuildingRegion,
   DEFAULT_COLORS,
-  SavedCombination,
   MCBI_COLORS,
 } from "@/lib/colors";
-import { getSavedCombinations, saveCombination, getUsername, setUsername as persistUsername } from "@/lib/storage";
+import { getUsername, setUsername as persistUsername } from "@/lib/storage";
 import { SharedDesign } from "@/lib/sharedState";
 import { fetchSharedState, updateSharedState, isJsonBinConfigured } from "@/lib/jsonbin";
 import BuildingImage from "./BuildingImage";
 import ColorPicker from "./ColorPicker";
-import SavedCombinations from "./SavedCombinations";
-import CommunityDesigns from "./CommunityDesigns";
+import UsernameModal from "./UsernameModal";
 
 export default function Visualizer() {
   const searchParams = useSearchParams();
@@ -27,140 +25,65 @@ export default function Visualizer() {
     return { roof, walls, trim };
   });
 
-  const [saved, setSaved] = useState<SavedCombination[]>([]);
-  const [saveName, setSaveName] = useState("");
-  const [showSaveInput, setShowSaveInput] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const buildingRef = useRef<HTMLDivElement>(null);
-
-  // Community / shared state
-  const [username, setUsernameState] = useState("");
-  const [usernameInput, setUsernameInput] = useState("");
-  const [communityDesigns, setCommunityDesigns] = useState<SharedDesign[]>([]);
-  const [communityLoading, setCommunityLoading] = useState(true);
-  const [shareName, setShareName] = useState("");
-  const [showShareInput, setShowShareInput] = useState(false);
+  // Username (required, persisted to localStorage). null = still loading
+  // from localStorage on first client render. Empty string = loaded but not
+  // set yet, so the modal needs to show. Non-empty = ready.
+  const [username, setUsernameState] = useState<string | null>(null);
+  const [savingToGallery, setSavingToGallery] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const configured = isJsonBinConfigured();
 
-  // Load saved combinations from localStorage + username
+  // Load username from localStorage on mount. One-time read of client-only
+  // state — cascading-render concern doesn't apply to a single setState on
+  // mount.
   useEffect(() => {
-    setSaved(getSavedCombinations());
-    const name = getUsername();
-    setUsernameState(name);
-    setUsernameInput(name);
+    setUsernameState(getUsername());
   }, []);
-
-  // Load community designs from JSONBin
-  useEffect(() => {
-    if (!configured) {
-      setCommunityLoading(false);
-      return;
-    }
-    fetchSharedState()
-      .then((state) => setCommunityDesigns(state.designs))
-      .catch(() => {})
-      .finally(() => setCommunityLoading(false));
-  }, [configured]);
 
   // Update URL when colors change (use history API directly to avoid
-  // triggering the Next.js router, which re-suspends useSearchParams)
+  // triggering the Next.js router, which re-suspends useSearchParams).
   useEffect(() => {
     const params = new URLSearchParams();
     params.set("roof", colors.roof);
     params.set("walls", colors.walls);
     params.set("trim", colors.trim);
-    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [colors]);
-
-  const regionHandlers = useMemo(() => ({
-    roof: (hex: string) => setColors((prev) => ({ ...prev, roof: hex })),
-    walls: (hex: string) => setColors((prev) => ({ ...prev, walls: hex })),
-    trim: (hex: string) => setColors((prev) => ({ ...prev, trim: hex })),
-  }), []);
-
-  const handleSave = useCallback(() => {
-    if (!saveName.trim()) return;
-    const newCombo = saveCombination(saveName.trim(), colors);
-    setSaved((prev) => [...prev, newCombo]);
-    setSaveName("");
-    setShowSaveInput(false);
-  }, [saveName, colors]);
-
-  const handleLoad = useCallback((loadedColors: ColorSelection) => {
-    setColors(loadedColors);
-  }, []);
-
-  const handleDelete = useCallback((id: string) => {
-    setSaved((prev) => prev.filter((c) => c.id !== id));
-  }, []);
-
-  const handleCopyLink = useCallback(async () => {
-    const params = new URLSearchParams();
-    params.set("roof", colors.roof);
-    params.set("walls", colors.walls);
-    params.set("trim", colors.trim);
-    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [colors]);
-
-  const handleExportImage = useCallback(async () => {
-    const srcCanvas = document.getElementById("building-canvas") as HTMLCanvasElement | null;
-    if (!srcCanvas) return;
-
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = srcCanvas.width;
-    exportCanvas.height = srcCanvas.height + 60;
-    const ctx = exportCanvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(srcCanvas, 0, 0);
-
-    // Color legend
-    ctx.fillStyle = "#333";
-    ctx.font = "24px sans-serif";
-    const roofName = MCBI_COLORS.find((c) => c.hex === colors.roof)?.name || colors.roof;
-    const wallsName = MCBI_COLORS.find((c) => c.hex === colors.walls)?.name || colors.walls;
-    const trimName = MCBI_COLORS.find((c) => c.hex === colors.trim)?.name || colors.trim;
-    ctx.fillText(
-      `Roof: ${roofName}  |  Walls: ${wallsName}  |  Trim: ${trimName}`,
-      40,
-      srcCanvas.height + 40
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}?${params.toString()}`,
     );
-
-    exportCanvas.toBlob((blob) => {
-      if (!blob) return;
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "cbap-lodge-colors.png";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }, "image/png");
   }, [colors]);
 
-  const handleReset = useCallback(() => {
-    setColors(DEFAULT_COLORS);
+  const regionHandlers = useMemo(
+    () => ({
+      roof: (hex: string) => setColors((prev) => ({ ...prev, roof: hex })),
+      walls: (hex: string) => setColors((prev) => ({ ...prev, walls: hex })),
+      trim: (hex: string) => setColors((prev) => ({ ...prev, trim: hex })),
+    }),
+    [],
+  );
+
+  // ── Username handlers ──────────────────────────────────────
+
+  const handleSetUsername = useCallback((name: string) => {
+    setUsernameState(name);
+    persistUsername(name);
   }, []);
 
-  // ── Community handlers ──────────────────────────────────────
+  const handleChangeName = useCallback(() => {
+    setUsernameState("");
+    persistUsername("");
+  }, []);
 
-  const handleSetUsername = useCallback(() => {
-    const trimmed = usernameInput.trim();
-    if (!trimmed) return;
-    setUsernameState(trimmed);
-    persistUsername(trimmed);
-  }, [usernameInput]);
+  // ── Gallery save ───────────────────────────────────────────
 
-  const handleShareDesign = useCallback(async () => {
-    if (!shareName.trim() || !username || !configured) return;
+  const handleSaveToGallery = useCallback(async () => {
+    if (!username || !configured || savingToGallery) return;
+    setSavingToGallery(true);
     try {
       const state = await fetchSharedState();
       const newDesign: SharedDesign = {
         id: crypto.randomUUID(),
-        name: shareName.trim(),
         colors: { ...colors },
         createdBy: username,
         createdAt: Date.now(),
@@ -169,53 +92,14 @@ export default function Visualizer() {
       };
       state.designs.push(newDesign);
       await updateSharedState(state);
-      setCommunityDesigns(state.designs);
-      setShareName("");
-      setShowShareInput(false);
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
     } catch {
       // silent fail – JSONBin may be unavailable
+    } finally {
+      setSavingToGallery(false);
     }
-  }, [shareName, username, colors, configured]);
-
-  const handleToggleVote = useCallback(
-    async (designId: string) => {
-      if (!username || !configured) return;
-      try {
-        const state = await fetchSharedState();
-        const design = state.designs.find((d) => d.id === designId);
-        if (!design) return;
-        const idx = design.thumbsUp.indexOf(username);
-        if (idx >= 0) {
-          design.thumbsUp.splice(idx, 1);
-        } else {
-          design.thumbsUp.push(username);
-        }
-        await updateSharedState(state);
-        setCommunityDesigns([...state.designs]);
-      } catch {}
-    },
-    [username, configured]
-  );
-
-  const handleAddComment = useCallback(
-    async (designId: string, text: string) => {
-      if (!username || !configured) return;
-      try {
-        const state = await fetchSharedState();
-        const design = state.designs.find((d) => d.id === designId);
-        if (!design) return;
-        design.comments.push({
-          id: crypto.randomUUID(),
-          author: username,
-          text,
-          createdAt: Date.now(),
-        });
-        await updateSharedState(state);
-        setCommunityDesigns([...state.designs]);
-      } catch {}
-    },
-    [username, configured]
-  );
+  }, [username, colors, configured, savingToGallery]);
 
   const regionLabel = (r: BuildingRegion) => {
     const labels: Record<BuildingRegion, string> = {
@@ -226,199 +110,104 @@ export default function Visualizer() {
     return labels[r];
   };
 
+  // First-visit modal: blocks the UI until a name is set. Shown when the
+  // username has been loaded from localStorage AND it is empty.
+  const showUsernameModal = username === "";
+
   return (
-    <div className="flex flex-col lg:flex-row gap-6 w-full max-w-7xl mx-auto p-4 sm:p-6">
-      {/* Building Preview */}
-      <div className="flex-1 min-w-0">
-        <div
-          ref={buildingRef}
-          className="bg-gradient-to-b from-sky-100 to-sky-50 rounded-xl p-4 sm:p-8 flex items-center justify-center shadow-inner"
-        >
-          <BuildingImage colors={colors} />
-        </div>
+    <>
+      {showUsernameModal && <UsernameModal onSubmit={handleSetUsername} />}
 
-        {/* Color summary bar */}
-        <div className="flex items-center gap-3 mt-4 p-3 bg-white rounded-lg border border-gray-200">
-          {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => {
-            const colorName = MCBI_COLORS.find((c) => c.hex === colors[region])?.name || colors[region];
-            return (
-              <div key={region} className="flex items-center gap-2 flex-1 min-w-0">
+      <div className="flex flex-col lg:flex-row gap-6 w-full max-w-7xl mx-auto p-4 sm:p-6">
+        {/* Building Preview */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-gradient-to-b from-sky-100 to-sky-50 rounded-xl p-4 sm:p-8 flex items-center justify-center shadow-inner">
+            <BuildingImage colors={colors} />
+          </div>
+
+          {/* Color summary bar */}
+          <div className="flex items-center gap-3 mt-4 p-3 bg-white rounded-lg border border-gray-200">
+            {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => {
+              const colorName =
+                MCBI_COLORS.find((c) => c.hex === colors[region])?.name ||
+                colors[region];
+              return (
                 <div
-                  className="w-6 h-6 rounded border border-gray-300 shrink-0"
-                  style={{ backgroundColor: colors[region] }}
-                />
-                <div className="min-w-0">
-                  <div className="text-xs text-gray-400 uppercase">{regionLabel(region)}</div>
-                  <div className="text-sm font-medium text-gray-700 truncate">{colorName}</div>
+                  key={region}
+                  className="flex items-center gap-2 flex-1 min-w-0"
+                >
+                  <div
+                    className="w-6 h-6 rounded border border-gray-300 shrink-0"
+                    style={{ backgroundColor: colors[region] }}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs text-gray-400 uppercase">
+                      {regionLabel(region)}
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 truncate">
+                      {colorName}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-wrap gap-2 mt-3">
-          <button
-            onClick={handleCopyLink}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-          >
-            {copied ? "Copied!" : "Copy Share Link"}
-          </button>
-          <button
-            onClick={handleExportImage}
-            className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
-          >
-            Download Image
-          </button>
-          <button
-            onClick={() => setShowSaveInput(!showSaveInput)}
-            className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-          >
-            Save Locally
-          </button>
+          {/* Save to gallery — the only action button */}
           {configured && (
-            <button
-              onClick={() => setShowShareInput(!showShareInput)}
-              disabled={!username}
-              className="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title={!username ? "Set your name first" : "Share with the group"}
-            >
-              Share to Community
-            </button>
-          )}
-          <button
-            onClick={handleReset}
-            className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors"
-          >
-            Reset
-          </button>
-        </div>
-
-        {/* Save input */}
-        {showSaveInput && (
-          <div className="flex gap-2 mt-2">
-            <input
-              type="text"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSave()}
-              placeholder="Name this combination..."
-              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
-              autoFocus
-            />
-            <button
-              onClick={handleSave}
-              disabled={!saveName.trim()}
-              className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Save
-            </button>
-          </div>
-        )}
-
-        {/* Share input */}
-        {showShareInput && configured && (
-          <div className="flex gap-2 mt-2">
-            <input
-              type="text"
-              value={shareName}
-              onChange={(e) => setShareName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleShareDesign()}
-              placeholder="Name this design for the group..."
-              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400"
-              autoFocus
-            />
-            <button
-              onClick={handleShareDesign}
-              disabled={!shareName.trim()}
-              className="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Share
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Color Picker Sidebar */}
-      <div className="w-full lg:w-96 shrink-0 space-y-4 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
-        {/* Your name */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-2">
-            Your Name
-          </h3>
-          {username ? (
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-800 flex-1">
-                {username}
-              </span>
+            <div className="mt-3">
               <button
-                onClick={() => { setUsernameState(""); persistUsername(""); }}
-                className="text-xs text-gray-400 hover:text-gray-600"
+                onClick={handleSaveToGallery}
+                disabled={!username || savingToGallery}
+                className="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                Change
+                {savingToGallery
+                  ? "Saving…"
+                  : justSaved
+                    ? "Saved to Gallery ✓"
+                    : "Save Design to Gallery"}
               </button>
             </div>
-          ) : (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={usernameInput}
-                onChange={(e) => setUsernameInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSetUsername()}
-                placeholder="Enter your name..."
-                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <div className="w-full lg:w-96 shrink-0 space-y-4 lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto">
+          {/* Current name */}
+          {username && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-2">
+                Your Name
+              </h3>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-800 flex-1">
+                  {username}
+                </span>
+                <button
+                  onClick={handleChangeName}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* All three color sections */}
+          {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => (
+            <div
+              key={region}
+              className="bg-white rounded-xl border border-gray-200 p-4"
+            >
+              <ColorPicker
+                region={region}
+                selectedHex={colors[region]}
+                onSelect={regionHandlers[region]}
               />
-              <button
-                onClick={handleSetUsername}
-                disabled={!usernameInput.trim()}
-                className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                Set
-              </button>
             </div>
-          )}
+          ))}
         </div>
-
-        {/* All three color sections */}
-        {(["roof", "walls", "trim"] as BuildingRegion[]).map((region) => (
-          <div key={region} className="bg-white rounded-xl border border-gray-200 p-4">
-            <ColorPicker
-              region={region}
-              selectedHex={colors[region]}
-              onSelect={regionHandlers[region]}
-            />
-          </div>
-        ))}
-
-        {/* Saved combinations (local) */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-3">
-            My Saved Combinations
-          </h3>
-          <SavedCombinations
-            combinations={saved}
-            onLoad={handleLoad}
-            onDelete={handleDelete}
-          />
-        </div>
-
-        {/* Community designs (shared via JSONBin) */}
-        {configured && (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-600 mb-3">
-              Community Designs
-            </h3>
-            <CommunityDesigns
-              designs={communityDesigns}
-              username={username}
-              onToggleVote={handleToggleVote}
-              onAddComment={handleAddComment}
-              onLoadDesign={handleLoad}
-              loading={communityLoading}
-            />
-          </div>
-        )}
       </div>
-    </div>
+    </>
   );
 }

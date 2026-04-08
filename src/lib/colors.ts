@@ -33,13 +33,6 @@ export interface ColorSelection {
   trim: string;
 }
 
-export interface SavedCombination {
-  id: string;
-  name: string;
-  colors: ColorSelection;
-  createdAt: number;
-}
-
 export const DEFAULT_COLORS: ColorSelection = {
   roof: "#70767C",     // Slate Gray
   walls: "#D9D3C7",    // Bone White

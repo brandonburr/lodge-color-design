@@ -2,387 +2,60 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ColorSelection } from "@/lib/colors";
+import {
+  loadLodgeImageData,
+  recolorTo,
+  LODGE_ASPECT_RATIO,
+  LodgeImageData,
+} from "@/lib/lodgeImageCache";
 
 interface BuildingImageProps {
   colors: ColorSelection;
+  /**
+   * Render width in CSS pixels for the canvas backing buffer. Defaults to
+   * the source resolution (1890) for the Designer page. Gallery cards pass
+   * a smaller value (e.g. 480) so each card renders much faster and uses
+   * far less memory.
+   */
+  renderWidth?: number;
+  /** Optional className passed through to the canvas element. */
+  className?: string;
 }
 
-// Region polygons traced from the lodge base image (1890x1398 pixels).
-// Tightly traced to follow actual building edges.
-
-// Roof outline — single quadrilateral from board-annotated vertices
-const ROOF_POLY: [number, number][] = [
-  [241, 431],
-  [561, 254],
-  [1622, 211],
-  [1423, 510],
-];
-
-// Front wall (below front eave, follows building outline, stops above foundation)
-const FRONT_WALL_POLY: [number, number][] = [
-  [241, 431],
-  [1423, 510],
-  [1423, 1130],
-  [315, 935],
-];
-
-// Side wall (right face, below side eave, stops above foundation)
-const SIDE_WALL_POLY: [number, number][] = [
-  [1423, 510],
-  [1622, 211],
-  [1622, 840],
-  [1423, 1130],
-];
-
-function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if (
-      yi > y !== yj > y &&
-      x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
-    ) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// --- Color math utilities ---
-
-function rgbToHsl(
-  r: number,
-  g: number,
-  b: number
-): [number, number, number] {
-  r /= 255;
-  g /= 255;
-  b /= 255;
-  const max = Math.max(r, g, b),
-    min = Math.min(r, g, b);
-  let h = 0,
-    s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-    else if (max === g) h = ((b - r) / d + 2) / 6;
-    else h = ((r - g) / d + 4) / 6;
-  }
-  return [h * 360, s * 100, l * 100];
-}
-
-function hslToRgb(
-  h: number,
-  s: number,
-  l: number
-): [number, number, number] {
-  h /= 360;
-  s /= 100;
-  l /= 100;
-  if (s === 0) {
-    const v = Math.round(l * 255);
-    return [v, v, v];
-  }
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  const hue2rgb = (t: number) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-    return p;
-  };
-  return [
-    Math.round(hue2rgb(h + 1 / 3) * 255),
-    Math.round(hue2rgb(h) * 255),
-    Math.round(hue2rgb(h - 1 / 3) * 255),
-  ];
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  if (!m) return [128, 128, 128];
-  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
-}
-
-// Region IDs
-const NONE = 0,
-  ROOF = 1,
-  WALLS = 2,
-  TRIM = 3;
-
-/**
- * Classify a pixel into a building region based on its color and position.
- * Trim detection compares base vs reference image pixel-by-pixel:
- * where the reference added red paint, pixels differ → trim.
- * Navy-blue pixels → walls.  Light pixels in roof polygon → roof.
- */
-function classifyPixel(
-  r: number,
-  g: number,
-  b: number,
-  x: number,
-  y: number,
-  trimR: number,
-  trimG: number,
-  trimB: number,
-): number {
-  // Trim: detected by comparing base image to reference image.
-  // The reference has red paint overlaid on trim areas, so pixels differ
-  // where trim was marked. This is more robust than analyzing reference
-  // color alone, especially at anti-aliased edges.
-  const dr = trimR - r;
-  const dg = trimG - g;
-  const db = trimB - b;
-  const totalDiff = Math.abs(dr) + Math.abs(dg) + Math.abs(db);
-
-  // Primary: significant pixel difference between base and reference
-  if (totalDiff > 30) {
-    return TRIM;
-  }
-
-  // Secondary: catch anti-aliased edge pixels with subtle red shift
-  if (totalDiff > 12 && dr > 3 && (dg < -2 || db < -2)) {
-    return TRIM;
-  }
-
-  const [h, s, l] = rgbToHsl(r, g, b);
-
-  // Navy-blue wall panels — require s>15 to avoid roof standing-seam ridges
-  if (h >= 190 && h <= 270 && s > 15 && l > 5 && l < 55) {
-    if (x > 80 && x < 1800 && y > 50 && y < 1300) {
-      return WALLS;
-    }
-  }
-
-  // Roof: bright or moderately dark (standing-seam ridges) within roof polygon
-  if (l > 50 && s < 40) {
-    if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
-  }
-
-  // Catch dark standing-seam ridges on roof (low sat, moderate darkness)
-  if (l >= 35 && l <= 60 && s < 15) {
-    if (pointInPoly(x, y, ROOF_POLY)) return ROOF;
-  }
-
-  return NONE;
-}
-
-export default function BuildingImage({ colors }: BuildingImageProps) {
+export default function BuildingImage({
+  colors,
+  renderWidth = 1890,
+  className = "w-full h-auto max-w-2xl rounded-lg",
+}: BuildingImageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const baseDataRef = useRef<ImageData | null>(null);
-  const maskRef = useRef<Uint8Array | null>(null);
-  const lumRef = useRef<Float32Array | null>(null);
-  const avgLumRef = useRef<Float32Array | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [data, setData] = useState<LodgeImageData | null>(null);
 
-  // Load the base image + trim reference and pre-compute the region mask + luminance map (once).
+  // Load (or pull from cache) the lodge image data.
   useEffect(() => {
-    const img = new Image();
-    const trimImg = new Image();
-    let baseLoaded = false;
-    let trimLoaded = false;
-
-    const buildMask = () => {
-      if (!baseLoaded || !trimLoaded) return;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-
-      // Get base image pixel data
-      ctx.drawImage(img, 0, 0);
-      const data = ctx.getImageData(0, 0, img.width, img.height);
-      baseDataRef.current = data;
-
-      // Get trim reference pixel data (scaled to match base image)
-      const trimCanvas = document.createElement("canvas");
-      trimCanvas.width = img.width;
-      trimCanvas.height = img.height;
-      const trimCtx = trimCanvas.getContext("2d");
-      if (!trimCtx) return;
-      trimCtx.drawImage(trimImg, 0, 0, img.width, img.height);
-      const trimData = trimCtx.getImageData(0, 0, img.width, img.height);
-      const trimPx = trimData.data;
-
-      const total = img.width * img.height;
-      const mask = new Uint8Array(total);
-      const lum = new Float32Array(total);
-      const px = data.data;
-
-      // Per-region luminance accumulators
-      const lumSum = new Float64Array(4);
-      const lumCount = new Uint32Array(4);
-
-      for (let i = 0; i < total; i++) {
-        const off = i * 4;
-        const region = classifyPixel(
-          px[off],
-          px[off + 1],
-          px[off + 2],
-          i % img.width,
-          (i / img.width) | 0,
-          trimPx[off],
-          trimPx[off + 1],
-          trimPx[off + 2],
-        );
-        mask[i] = region;
-        if (region > 0) {
-          const l = rgbToHsl(px[off], px[off + 1], px[off + 2])[2];
-          lum[i] = l;
-          lumSum[region] += l;
-          lumCount[region]++;
-        }
-      }
-
-      // Morphological close on trim mask: dilate then erode to fill small gaps
-      // in the detected trim regions (anti-aliasing and scaling artifacts).
-      const w = img.width;
-      const h = img.height;
-      let trimBin = new Uint8Array(total);
-      for (let i = 0; i < total; i++) {
-        trimBin[i] = mask[i] === TRIM ? 1 : 0;
-      }
-      const CLOSE_ITERS = 3;
-      // Dilate: expand trim regions
-      for (let iter = 0; iter < CLOSE_ITERS; iter++) {
-        const next = new Uint8Array(trimBin);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            if (trimBin[idx]) continue;
-            if (
-              trimBin[idx - w - 1] || trimBin[idx - w] || trimBin[idx - w + 1] ||
-              trimBin[idx - 1] || trimBin[idx + 1] ||
-              trimBin[idx + w - 1] || trimBin[idx + w] || trimBin[idx + w + 1]
-            ) {
-              next[idx] = 1;
-            }
-          }
-        }
-        trimBin = next;
-      }
-      // Erode: shrink back to original boundary
-      for (let iter = 0; iter < CLOSE_ITERS; iter++) {
-        const next = new Uint8Array(trimBin);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            if (!trimBin[idx]) continue;
-            if (
-              !trimBin[idx - w - 1] || !trimBin[idx - w] || !trimBin[idx - w + 1] ||
-              !trimBin[idx - 1] || !trimBin[idx + 1] ||
-              !trimBin[idx + w - 1] || !trimBin[idx + w] || !trimBin[idx + w + 1]
-            ) {
-              next[idx] = 0;
-            }
-          }
-        }
-        trimBin = next;
-      }
-      // Apply closed mask: upgrade NONE and WALLS pixels to TRIM.
-      // Trim areas sit on/within walls, so wall pixels surrounded by trim
-      // are misclassified boundary pixels that should be part of the trim.
-      for (let i = 0; i < total; i++) {
-        if (trimBin[i] && (mask[i] === NONE || mask[i] === WALLS)) {
-          mask[i] = TRIM;
-        }
-      }
-
-      // Recompute luminance for trim region after morphological cleanup
-      lumSum[TRIM] = 0;
-      lumCount[TRIM] = 0;
-      for (let i = 0; i < total; i++) {
-        if (mask[i] === TRIM) {
-          const off = i * 4;
-          const l = rgbToHsl(px[off], px[off + 1], px[off + 2])[2];
-          lum[i] = l;
-          lumSum[TRIM] += l;
-          lumCount[TRIM]++;
-        }
-      }
-
-      // Compute average luminance per region
-      const avgLum = new Float32Array(4);
-      for (let r = 1; r <= 3; r++) {
-        avgLum[r] = lumCount[r] > 0 ? lumSum[r] / lumCount[r] : 50;
-      }
-
-      maskRef.current = mask;
-      lumRef.current = lum;
-      avgLumRef.current = avgLum;
-      setLoaded(true);
+    let cancelled = false;
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    loadLodgeImageData(basePath)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((err) => {
+        console.error("[BuildingImage] failed to load lodge data:", err);
+      });
+    return () => {
+      cancelled = true;
     };
-
-    img.onload = () => { baseLoaded = true; buildMask(); };
-    trimImg.onload = () => { trimLoaded = true; buildMask(); };
-
-    const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
-    img.src = `${base}/lodge_base.jpg`;
-    trimImg.src = `${base}/lodge_trim_mask.png`;
   }, []);
 
-  // Re-colorize whenever the selected colors change.
+  // Re-render whenever colors or render size change.
   useEffect(() => {
-    if (!loaded) return;
+    if (!data) return;
     const canvas = canvasRef.current;
-    const base = baseDataRef.current;
-    const mask = maskRef.current;
-    const lumArr = lumRef.current;
-    const avgLum = avgLumRef.current;
-    if (!canvas || !base || !mask || !lumArr || !avgLum) return;
+    if (!canvas) return;
 
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return;
+    canvas.width = renderWidth;
+    canvas.height = Math.round(renderWidth * LODGE_ASPECT_RATIO);
+    recolorTo(data, colors, canvas);
+  }, [data, colors, renderWidth]);
 
-    const out = new ImageData(
-      new Uint8ClampedArray(base.data),
-      base.width,
-      base.height
-    );
-    const d = out.data;
-
-    // Pre-compute HSL for each target color
-    const roofHsl = rgbToHsl(...hexToRgb(colors.roof));
-    const wallsHsl = rgbToHsl(...hexToRgb(colors.walls));
-    const trimHsl = rgbToHsl(...hexToRgb(colors.trim));
-    const targets = [null, roofHsl, wallsHsl, trimHsl];
-
-    for (let i = 0; i < mask.length; i++) {
-      const region = mask[i];
-      if (region === 0) continue;
-
-      const off = i * 4;
-      const t = targets[region]!;
-      // Relative luminance: preserve texture/shading while matching target brightness.
-      // For trim, clamp the ratio tightly to avoid white noise from mixed-luminance pixels.
-      let relLum = avgLum[region] > 0 ? lumArr[i] / avgLum[region] : 1;
-      if (region === TRIM) {
-        // Tight clamp: trim is flat-painted metal, so keep nearly uniform color
-        // to avoid noisy/splotchy appearance from luminance variation.
-        relLum = Math.min(1.08, Math.max(0.92, relLum));
-      }
-      const newL = Math.min(100, Math.max(0, t[2] * relLum));
-      const [nr, ng, nb] = hslToRgb(t[0], t[1], newL);
-      d[off] = nr;
-      d[off + 1] = ng;
-      d[off + 2] = nb;
-    }
-
-    ctx.putImageData(out, 0, 0);
-  }, [colors, loaded]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      id="building-canvas"
-      className="w-full h-auto max-w-2xl rounded-lg"
-    />
-  );
+  return <canvas ref={canvasRef} id="building-canvas" className={className} />;
 }
