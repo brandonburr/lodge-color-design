@@ -14,6 +14,7 @@ import { fetchSharedState, updateSharedState, isJsonBinConfigured } from "@/lib/
 import BuildingImage from "./BuildingImage";
 import ColorPicker from "./ColorPicker";
 import UsernameModal from "./UsernameModal";
+import DuplicateDesignModal from "./DuplicateDesignModal";
 
 export default function Visualizer() {
   const searchParams = useSearchParams();
@@ -31,6 +32,12 @@ export default function Visualizer() {
   const [username, setUsernameState] = useState<string | null>(null);
   const [savingToGallery, setSavingToGallery] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  // If the user tries to save a design that already exists in the
+  // gallery, hold the existing one here so we can show the duplicate
+  // modal with a "vote on it instead" option.
+  const [duplicateDesign, setDuplicateDesign] = useState<SharedDesign | null>(
+    null,
+  );
   const configured = isJsonBinConfigured();
 
   // Load username from localStorage on mount. One-time read of client-only
@@ -82,6 +89,25 @@ export default function Visualizer() {
     setSavingToGallery(true);
     try {
       const state = await fetchSharedState();
+
+      // Look for an existing design with the exact same color combo.
+      // Hex strings can come from URL params in either case so normalize.
+      const target = {
+        roof: colors.roof.toLowerCase(),
+        walls: colors.walls.toLowerCase(),
+        trim: colors.trim.toLowerCase(),
+      };
+      const existing = state.designs.find(
+        (d) =>
+          d.colors.roof.toLowerCase() === target.roof &&
+          d.colors.walls.toLowerCase() === target.walls &&
+          d.colors.trim.toLowerCase() === target.trim,
+      );
+      if (existing) {
+        setDuplicateDesign(existing);
+        return;
+      }
+
       const newDesign: SharedDesign = {
         id: crypto.randomUUID(),
         colors: { ...colors },
@@ -101,6 +127,26 @@ export default function Visualizer() {
     }
   }, [username, colors, configured, savingToGallery]);
 
+  // Vote on the duplicate design from the modal. Optimistically closes
+  // the modal and shows the "saved" affordance, then writes to the
+  // server in the background — same pattern as the gallery's vote
+  // handler so the click feels instant.
+  const handleVoteOnDuplicate = useCallback(async () => {
+    if (!duplicateDesign || !username) return;
+    const designId = duplicateDesign.id;
+    setDuplicateDesign(null);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 2000);
+    try {
+      const state = await fetchSharedState();
+      const design = state.designs.find((d) => d.id === designId);
+      if (!design) return;
+      if (design.thumbsUp.includes(username)) return;
+      design.thumbsUp.push(username);
+      await updateSharedState(state);
+    } catch {}
+  }, [duplicateDesign, username]);
+
   const regionLabel = (r: BuildingRegion) => {
     const labels: Record<BuildingRegion, string> = {
       roof: "Roof",
@@ -117,6 +163,14 @@ export default function Visualizer() {
   return (
     <>
       {showUsernameModal && <UsernameModal onSubmit={handleSetUsername} />}
+      {duplicateDesign && username && (
+        <DuplicateDesignModal
+          design={duplicateDesign}
+          username={username}
+          onVote={handleVoteOnDuplicate}
+          onClose={() => setDuplicateDesign(null)}
+        />
+      )}
 
       <div className="flex flex-col lg:flex-row gap-6 w-full max-w-7xl mx-auto p-4 sm:p-6">
         {/* Building Preview */}
