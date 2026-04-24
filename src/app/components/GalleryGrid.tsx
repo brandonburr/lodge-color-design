@@ -51,6 +51,9 @@ export default function GalleryGrid() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>(
     {},
   );
+  const [postingComments, setPostingComments] = useState<Set<string>>(
+    new Set(),
+  );
   // Pending background server writes for vote toggles, keyed by design id.
   // We chain new clicks onto the previous promise so writes serialize per
   // design but the UI stays optimistic.
@@ -150,6 +153,20 @@ export default function GalleryGrid() {
       if (!username || !configured) return;
       const text = (commentDrafts[designId] || "").trim();
       if (!text) return;
+      // Guard against double-submit: if a post for this design is already
+      // in flight, ignore the second click / Enter press. Checked against
+      // the state setter so we see the current value synchronously.
+      let alreadyPosting = false;
+      setPostingComments((prev) => {
+        if (prev.has(designId)) {
+          alreadyPosting = true;
+          return prev;
+        }
+        const next = new Set(prev);
+        next.add(designId);
+        return next;
+      });
+      if (alreadyPosting) return;
       try {
         const state = await fetchSharedState();
         const design = state.designs.find((d) => d.id === designId);
@@ -163,9 +180,34 @@ export default function GalleryGrid() {
         await updateSharedState(state);
         setDesigns([...state.designs]);
         setCommentDrafts((prev) => ({ ...prev, [designId]: "" }));
-      } catch {}
+      } catch {
+      } finally {
+        setPostingComments((prev) => {
+          if (!prev.has(designId)) return prev;
+          const next = new Set(prev);
+          next.delete(designId);
+          return next;
+        });
+      }
     },
     [username, configured, commentDrafts],
+  );
+
+  const handleDeleteComment = useCallback(
+    async (designId: string, commentId: string) => {
+      if (!username || !configured) return;
+      try {
+        const state = await fetchSharedState();
+        const design = state.designs.find((d) => d.id === designId);
+        if (!design) return;
+        const comment = design.comments.find((c) => c.id === commentId);
+        if (!comment || comment.author !== username) return;
+        design.comments = design.comments.filter((c) => c.id !== commentId);
+        await updateSharedState(state);
+        setDesigns([...state.designs]);
+      } catch {}
+    },
+    [username, configured],
   );
 
   const handleDelete = useCallback(
@@ -343,41 +385,86 @@ export default function GalleryGrid() {
                       <div className="mt-2 border-t border-gray-100 pt-2 space-y-2">
                         {design.comments.map((c) => (
                           <div key={c.id} className="text-sm">
-                            <span className="font-medium text-gray-700">
-                              {c.author}
-                            </span>
-                            <span className="text-gray-400 text-xs ml-1">
-                              {new Date(c.createdAt).toLocaleDateString()}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="font-medium text-gray-700">
+                                {c.author}
+                              </span>
+                              <span className="text-gray-400 text-xs">
+                                {new Date(c.createdAt).toLocaleDateString()}
+                              </span>
+                              {username && c.author === username && (
+                                <button
+                                  onClick={() =>
+                                    handleDeleteComment(design.id, c.id)
+                                  }
+                                  className="ml-auto text-xs text-red-500 hover:text-red-700 hover:underline"
+                                  title="Delete this comment"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                             <p className="text-gray-600 mt-0.5">{c.text}</p>
                           </div>
                         ))}
 
                         {username ? (
-                          <div className="flex gap-2 mt-2">
-                            <input
-                              type="text"
-                              value={commentDrafts[design.id] || ""}
-                              onChange={(e) =>
-                                setCommentDrafts((prev) => ({
-                                  ...prev,
-                                  [design.id]: e.target.value,
-                                }))
-                              }
-                              onKeyDown={(e) =>
-                                e.key === "Enter" && handleAddComment(design.id)
-                              }
-                              placeholder="Write a comment…"
-                              className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
-                            />
-                            <button
-                              onClick={() => handleAddComment(design.id)}
-                              disabled={!(commentDrafts[design.id] || "").trim()}
-                              className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                            >
-                              Post
-                            </button>
-                          </div>
+                          (() => {
+                            const posting = postingComments.has(design.id);
+                            const draft = commentDrafts[design.id] || "";
+                            return (
+                              <div className="flex gap-2 mt-2">
+                                <input
+                                  type="text"
+                                  value={draft}
+                                  onChange={(e) =>
+                                    setCommentDrafts((prev) => ({
+                                      ...prev,
+                                      [design.id]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && !posting) {
+                                      handleAddComment(design.id);
+                                    }
+                                  }}
+                                  disabled={posting}
+                                  placeholder="Write a comment…"
+                                  className="flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:bg-gray-50 disabled:text-gray-400"
+                                />
+                                <button
+                                  onClick={() => handleAddComment(design.id)}
+                                  disabled={posting || !draft.trim()}
+                                  className="px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                                >
+                                  {posting && (
+                                    <svg
+                                      className="animate-spin h-3.5 w-3.5"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      aria-hidden
+                                    >
+                                      <circle
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        stroke="currentColor"
+                                        strokeOpacity="0.25"
+                                        strokeWidth="4"
+                                      />
+                                      <path
+                                        d="M4 12a8 8 0 018-8"
+                                        stroke="currentColor"
+                                        strokeWidth="4"
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                  )}
+                                  <span>{posting ? "Posting…" : "Post"}</span>
+                                </button>
+                              </div>
+                            );
+                          })()
                         ) : (
                           <div className="text-xs text-gray-400 italic">
                             Set your name to comment.
